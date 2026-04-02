@@ -1,0 +1,13 @@
+{
+  "bcl2fastq_demux.bcl_tar_gz": "gs://my-bucket/runs/my_run.tar.gz",
+  "bcl2fastq_demux.sample_sheet": "gs://my-bucket/sample_sheets/SampleSheet.csv",
+  "bcl2fastq_demux.reverse_complement": true,
+  "bcl2fastq_demux.barcode_mismatches": 0,
+  "bcl2fastq_demux.loading_threads": 4,
+  "bcl2fastq_demux.demux_threads": 4,
+  "bcl2fastq_demux.processing_threads": 8,
+  "bcl2fastq_demux.writing_threads": 4,
+  "bcl2fastq_demux.memory_gb": 16,
+  "bcl2fastq_demux.disk_gb": 500,
+  "bcl2fastq_demux.preemptible": 1
+}
