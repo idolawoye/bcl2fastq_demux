@@ -1,0 +1,12 @@
+version: 1.2
+workflows:
+  - subclass: WDL
+    primaryDescriptorPath: /bcl2fastq_demux.wdl
+    testParameterFiles:
+      - /bcl2fastq_demux_inputs.json
+    readMePath: /README.md
+    name: bcl2fastq_demux
+    publish: false
+    authors:
+      - name: Idowu Olawoye
+        email: idowuolawoye@gmail.com
