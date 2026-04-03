@@ -48,7 +48,8 @@ version 2.0
 workflow bcl2fastq_demux {
 
     meta {
-        author: "Generated for Terra/Dockstore"
+        author: "Idowu Olawoye"
+        email: "idowuolawoye@gmail.com"
         description: "Demultiplex a NextSeq BCL run (tar.gz) and SampleSheet.csv into paired-end gzipped FASTQ files using bcl_to_fastq (bcl2fastq-nextseq)."
     }
 
