@@ -8,6 +8,8 @@
   "bcl2fastq_demux.processing_threads": 8,
   "bcl2fastq_demux.writing_threads": 4,
   "bcl2fastq_demux.memory_gb": 16,
-  "bcl2fastq_demux.disk_gb": 500,
+  "bcl2fastq_demux.disk_multiplier": 15,
+  "bcl2fastq_demux.disk_overhead_gb": 50,
   "bcl2fastq_demux.preemptible": 1
+} "bcl2fastq_demux.preemptible": 1
 }
