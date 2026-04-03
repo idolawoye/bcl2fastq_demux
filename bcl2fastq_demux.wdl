@@ -1,4 +1,4 @@
-version 1.1
+version 1.0
 
 ## bcl2fastq_demux.wdl
 ##
