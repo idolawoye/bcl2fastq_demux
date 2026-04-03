@@ -1,4 +1,4 @@
-version 1.0
+version 2.0
 
 ## bcl2fastq_demux.wdl
 ##
@@ -7,6 +7,19 @@ version 1.0
 ##
 ## Tool: bcl_to_fastq (brwnj/bcl2fastq) v1.3.0
 ## Container: quay.io/biocontainers/bcl2fastq-nextseq:1.3.0--pyh5e36f6f_0
+##
+## Disk sizing strategy
+## --------------------
+## BCL archives expand to ~5-10x their compressed size on disk, and the FASTQ
+## output adds roughly another 2-3x of the compressed input. The disk is
+## therefore sized dynamically as:
+##
+##   ceil(bcl_tar_gz_bytes / 1 GiB) * disk_multiplier + disk_overhead_gb
+##
+## with safe defaults of multiplier=15 and overhead=50 GiB. This usually
+## avoids "No space left on device" errors without over-provisioning.
+## Override disk_multiplier or disk_overhead_gb if your run is unusually
+## large or your FASTQ output is much bigger than the BCL input.
 ##
 ## Inputs
 ## ------
@@ -21,21 +34,21 @@ version 1.0
 ##   processing_threads: FASTQ processing threads [default 8]
 ##   writing_threads   : FASTQ writing threads  [default 4]
 ##   memory_gb         : RAM to allocate (GiB) [default 16]
-##   disk_gb           : disk to allocate (GiB) [default 500]
+##   disk_multiplier   : multiplier on compressed input size for disk [default 15]
+##   disk_overhead_gb  : flat GiB added on top of the scaled disk [default 50]
 ##   preemptible       : number of preemptible retries [default 1]
 ##
 ## Outputs
 ## -------
-##   fastq_r1  : Array of R1 FASTQ files (one per sample)
-##   fastq_r2  : Array of R2 FASTQ files (one per sample)
-##   demux_stats: demultiplexing_stats.csv produced by bcl_to_fastq
+##   fastq_r1     : Array of R1 FASTQ files (one per sample)
+##   fastq_r2     : Array of R2 FASTQ files (one per sample)
+##   demux_stats  : demultiplexing_stats.csv produced by bcl_to_fastq
 ##   bcl2fastq_log: raw bcl2fastq log
 
 workflow bcl2fastq_demux {
 
     meta {
-        author: "Idowu Olawoye"
-        email: "idowuolawoye@gmail.com"
+        author: "Generated for Terra/Dockstore"
         description: "Demultiplex a NextSeq BCL run (tar.gz) and SampleSheet.csv into paired-end gzipped FASTQ files using bcl_to_fastq (bcl2fastq-nextseq)."
     }
 
@@ -76,9 +89,13 @@ workflow bcl2fastq_demux {
             description: "RAM to allocate in GiB.",
             default: 16
         }
-        disk_gb: {
-            description: "Disk space to allocate in GiB. Should comfortably exceed the uncompressed BCL data size.",
-            default: 500
+        disk_multiplier: {
+            description: "Multiplier applied to the compressed BCL input size to estimate total disk needed. Default 15 covers extraction (~5-10x) plus FASTQ output (~2-3x).",
+            default: 15
+        }
+        disk_overhead_gb: {
+            description: "Flat GiB added on top of the scaled disk estimate for OS, container layers, and log files.",
+            default: 50
         }
         preemptible: {
             description: "Number of times to allow preemptible VM retries (Google Cloud).",
@@ -96,9 +113,14 @@ workflow bcl2fastq_demux {
         Int     processing_threads    = 8
         Int     writing_threads       = 4
         Int     memory_gb             = 16
-        Int     disk_gb               = 500
+        Int     disk_multiplier       = 15
+        Int     disk_overhead_gb      = 50
         Int     preemptible           = 1
     }
+
+    # Compute disk size from actual input file size at workflow-parse time.
+    # size() returns GiB; ceil() rounds up to the nearest whole GiB.
+    Int disk_gb = ceil(size(bcl_tar_gz, "GiB")) * disk_multiplier + disk_overhead_gb
 
     call Demultiplex {
         input:
@@ -149,10 +171,16 @@ task Demultiplex {
     command <<<
         set -euo pipefail
 
+        # ── 0. Report available disk space for debugging ─────────────────────
+        echo "[INFO] Disk available before extraction:"
+        df -h .
+
         # ── 1. Extract the BCL run archive ──────────────────────────────────
         mkdir -p run_dir
         echo "[INFO] Extracting BCL archive: ~{bcl_tar_gz}"
         tar -xzf "~{bcl_tar_gz}" -C run_dir --strip-components=1
+        echo "[INFO] Disk after extraction:"
+        df -h .
 
         # ── 2. Place the sample sheet inside the run directory ──────────────
         # bcl_to_fastq expects SampleSheet.csv at the root of the run folder
@@ -170,28 +198,32 @@ task Demultiplex {
             ~{rc_flag} \
             --no-wait
 
+        echo "[INFO] Disk after bcl_to_fastq:"
+        df -h .
+
         # ── 4. Collect outputs ──────────────────────────────────────────────
         BASECALLS="run_dir/Data/Intensities/BaseCalls"
 
-        # Copy all per-sample R1/R2 fastqs to the working directory so
-        # Cromwell/TES can delocalize them as workflow outputs.
+        # Move (not copy) FASTQs to avoid doubling disk usage.
         # bcl_to_fastq names them <sample>_R1.fastq.gz / <sample>_R2.fastq.gz
         mkdir -p fastqs_out
 
         find "${BASECALLS}" -maxdepth 1 -name "*_R1.fastq.gz" \
             ! -name "Undetermined*" \
-            -exec cp {} fastqs_out/ \;
+            -exec mv {} fastqs_out/ \;
 
         find "${BASECALLS}" -maxdepth 1 -name "*_R2.fastq.gz" \
             ! -name "Undetermined*" \
-            -exec cp {} fastqs_out/ \;
+            -exec mv {} fastqs_out/ \;
 
-        # Copy stats and log
-        cp run_dir/demultiplexing_stats.csv demultiplexing_stats.csv
-        cp run_dir/bcl2fastq.log            bcl2fastq.log
+        # Move stats and log to the Cromwell working directory
+        mv run_dir/demultiplexing_stats.csv demultiplexing_stats.csv
+        mv run_dir/bcl2fastq.log            bcl2fastq.log
 
         echo "[INFO] Done. FASTQ files:"
         ls -lh fastqs_out/
+        echo "[INFO] Final disk usage:"
+        df -h .
     >>>
 
     output {
@@ -204,7 +236,7 @@ task Demultiplex {
     runtime {
         docker:      "quay.io/biocontainers/bcl2fastq-nextseq:1.3.0--pyh5e36f6f_0"
         memory:      "~{memory_gb} GiB"
-        disks:       "local-disk ~{disk_gb} HDD"
+        disks:       "local-disk ~{disk_gb} SSD"
         cpu:         processing_threads
         preemptible: preemptible
         maxRetries:  1
