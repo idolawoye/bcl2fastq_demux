@@ -2,54 +2,52 @@ version 1.0
 
 ## bcl2fastq_demux.wdl
 ##
-## Demultiplexes an Illumina NextSeq BCL run directory (supplied as a tar.gz
-## archive) and a CSV sample sheet into paired-end gzipped FASTQ files.
+## Demultiplexes an Illumina BCL run directory (supplied as a tar.gz archive)
+## and a CSV sample sheet into paired-end gzipped FASTQ files using
+## Illumina BCL Convert v4.4.6.
 ##
-## Tool: bcl_to_fastq (brwnj/bcl2fastq) v1.3.0
-## Container: quay.io/biocontainers/bcl2fastq-nextseq:1.3.0--pyh5e36f6f_0
+## Binary: bcl-convert (NOT bcl2fastq — this is the newer Illumina tool)
+##
+##
+## Sample sheet format
+## --------------------
+## BCL Convert 4.x expects a v2 sample sheet with sections:
+##   [Header], [Reads], [BCLConvert_Settings], [BCLConvert_Data]
+## The legacy bcl2fastq v1 format ([Data] with Sample_ID/index columns) is
+## also accepted. Index RC handling is read from RunInfo.xml automatically;
+## you do not need to set it manually for NextSeq/NovaSeq runs.
 ##
 ## Disk sizing strategy
 ## --------------------
-## BCL archives expand to ~5-10x their compressed size on disk, and the FASTQ
-## output adds roughly another 2-3x of the compressed input. The disk is
-## therefore sized dynamically as:
-##
-##   ceil(bcl_tar_gz_bytes / 1 GiB) * disk_multiplier + disk_overhead_gb
-##
-## with safe defaults of multiplier=15 and overhead=50 GiB. This usually
-## avoids "No space left on device" errors without over-provisioning.
-## Override disk_multiplier or disk_overhead_gb if your run is unusually
-## large or your FASTQ output is much bigger than the BCL input.
+## BCL archives expand ~5-10x when extracted; FASTQ output adds ~2-3x more.
+## Disk is sized dynamically as:
+##   ceil(size(bcl_tar_gz, "GiB")) * disk_multiplier + disk_overhead_gb
+## Defaults: multiplier=15, overhead=50 GiB.
 ##
 ## Inputs
 ## ------
-##   bcl_tar_gz        : tar.gz archive of the Illumina run directory
-##                       (must contain RunInfo.xml, RTAComplete.txt, etc.)
-##   sample_sheet      : Illumina-format SampleSheet.csv
-##   reverse_complement: reverse-complement index 2 (required for most
-##                       NextSeq dual-index libraries) [default true]
-##   barcode_mismatches: allowed mismatches per index [default 0]
-##   loading_threads   : BCL loading threads  [default 4]
-##   demux_threads     : demultiplexing threads [default 4]
-##   processing_threads: FASTQ processing threads [default 8]
-##   writing_threads   : FASTQ writing threads  [default 4]
-##   memory_gb         : RAM to allocate (GiB) [default 16]
-##   disk_multiplier   : multiplier on compressed input size for disk [default 15]
-##   disk_overhead_gb  : flat GiB added on top of the scaled disk [default 50]
-##   preemptible       : number of preemptible retries [default 1]
+##   bcl_tar_gz         : tar.gz of the Illumina run directory
+##   sample_sheet       : Illumina SampleSheet.csv (v1 or v2 format)
+##   no_lane_splitting  : merge all lanes into one FASTQ per sample [default true]
+##   barcode_mismatches : allowed mismatches per index [default 1]
+##   memory_gb          : RAM in GiB [default 16]
+##   disk_multiplier    : multiplier on compressed input size [default 15]
+##   disk_overhead_gb   : flat GiB overhead [default 50]
+##   preemptible        : preemptible VM retries [default 1]
 ##
 ## Outputs
 ## -------
-##   fastq_r1     : Array of R1 FASTQ files (one per sample)
-##   fastq_r2     : Array of R2 FASTQ files (one per sample)
-##   demux_stats  : demultiplexing_stats.csv produced by bcl_to_fastq
-##   bcl2fastq_log: raw bcl2fastq log
+##   fastq_r1          : Array of R1 FASTQ files (one per sample)
+##   fastq_r2          : Array of R2 FASTQ files (one per sample)
+##   reports_tar_gz    : Reports directory archived as tar.gz
+##   bcl_convert_log   : bcl-convert stdout+stderr log
 
 workflow bcl2fastq_demux {
 
     meta {
-        author: "Generated for Terra/Dockstore"
-        description: "Demultiplex a NextSeq BCL run (tar.gz) and SampleSheet.csv into paired-end gzipped FASTQ files using bcl_to_fastq (bcl2fastq-nextseq)."
+        author: "Idowu Olawoye"
+        email:	"idowuolawoye@gmail.com"
+        description: "Demultiplex an Illumina BCL run (tar.gz) and SampleSheet.csv into paired-end gzipped FASTQ files using BCL Convert v4.4.6."
     }
 
     parameter_meta {
@@ -58,47 +56,31 @@ workflow bcl2fastq_demux {
             localization_optional: false
         }
         sample_sheet: {
-            description: "Illumina SampleSheet.csv",
+            description: "Illumina SampleSheet.csv (v1 or v2 format)",
             localization_optional: false
         }
-        reverse_complement: {
-            description: "Reverse-complement index 2 of the sample sheet. Required for most NextSeq dual-index runs.",
+        no_lane_splitting: {
+            description: "Merge all lanes into a single FASTQ per sample. When true, output filenames omit the L00N lane component.",
             default: true
         }
         barcode_mismatches: {
-            description: "Number of allowed mismatches per index barcode.",
-            default: 0
-        }
-        loading_threads: {
-            description: "Number of threads for loading BCL data.",
-            default: 4
-        }
-        demux_threads: {
-            description: "Number of threads for demultiplexing.",
-            default: 4
-        }
-        processing_threads: {
-            description: "Number of threads for processing demultiplexed data.",
-            default: 8
-        }
-        writing_threads: {
-            description: "Number of threads for writing FASTQ data.",
-            default: 4
+            description: "Allowed mismatches per index barcode. BCL Convert default is 1.",
+            default: 1
         }
         memory_gb: {
             description: "RAM to allocate in GiB.",
             default: 16
         }
         disk_multiplier: {
-            description: "Multiplier applied to the compressed BCL input size to estimate total disk needed. Default 15 covers extraction (~5-10x) plus FASTQ output (~2-3x).",
+            description: "Multiplier on compressed BCL input size for disk estimate.",
             default: 15
         }
         disk_overhead_gb: {
-            description: "Flat GiB added on top of the scaled disk estimate for OS, container layers, and log files.",
+            description: "Flat GiB added on top of the scaled disk estimate.",
             default: 50
         }
         preemptible: {
-            description: "Number of times to allow preemptible VM retries (Google Cloud).",
+            description: "Number of preemptible VM retries (Google Cloud).",
             default: 1
         }
     }
@@ -106,146 +88,138 @@ workflow bcl2fastq_demux {
     input {
         File    bcl_tar_gz
         File    sample_sheet
-        Boolean reverse_complement    = true
-        Int     barcode_mismatches    = 0
-        Int     loading_threads       = 4
-        Int     demux_threads         = 4
-        Int     processing_threads    = 8
-        Int     writing_threads       = 4
-        Int     memory_gb             = 16
-        Int     disk_multiplier       = 15
-        Int     disk_overhead_gb      = 50
-        Int     preemptible           = 1
+        Boolean no_lane_splitting  = true
+        Int     barcode_mismatches = 1
+        Int     memory_gb          = 16
+        Int     disk_multiplier    = 15
+        Int     disk_overhead_gb   = 50
+        Int     preemptible        = 1
     }
 
-    # Compute disk size from actual input file size at workflow-parse time.
-    # size() returns GiB; ceil() rounds up to the nearest whole GiB.
+    # Dynamic disk sizing based on actual compressed input size
     Int disk_gb = ceil(size(bcl_tar_gz, "GiB")) * disk_multiplier + disk_overhead_gb
 
-    call Demultiplex {
+    call BclConvert {
         input:
             bcl_tar_gz         = bcl_tar_gz,
             sample_sheet       = sample_sheet,
-            reverse_complement = reverse_complement,
+            no_lane_splitting  = no_lane_splitting,
             barcode_mismatches = barcode_mismatches,
-            loading_threads    = loading_threads,
-            demux_threads      = demux_threads,
-            processing_threads = processing_threads,
-            writing_threads    = writing_threads,
             memory_gb          = memory_gb,
             disk_gb            = disk_gb,
             preemptible        = preemptible
     }
 
     output {
-        Array[File] fastq_r1    = Demultiplex.fastq_r1
-        Array[File] fastq_r2    = Demultiplex.fastq_r2
-        File        demux_stats = Demultiplex.demux_stats
-        File        bcl2fastq_log = Demultiplex.bcl2fastq_log
+        Array[File] fastq_r1        = BclConvert.fastq_r1
+        Array[File] fastq_r2        = BclConvert.fastq_r2
+        File        reports_tar_gz  = BclConvert.reports_tar_gz
+        File        bcl_convert_log = BclConvert.bcl_convert_log
     }
 }
 
-task Demultiplex {
+task BclConvert {
 
     meta {
-        description: "Extracts the BCL tar.gz, places the sample sheet, runs bcl_to_fastq, and collects paired-end FASTQ outputs."
+        description: "Extracts the BCL tar.gz and runs bcl-convert 4.4.6 to produce paired-end FASTQ files."
     }
 
     input {
         File    bcl_tar_gz
         File    sample_sheet
-        Boolean reverse_complement
+        Boolean no_lane_splitting
         Int     barcode_mismatches
-        Int     loading_threads
-        Int     demux_threads
-        Int     processing_threads
-        Int     writing_threads
         Int     memory_gb
         Int     disk_gb
         Int     preemptible
     }
 
-    # Build the optional --reverse-complement flag string once
-    String rc_flag = if reverse_complement then "--reverse-complement" else ""
+    # bcl-convert --no-lane-splitting takes an explicit boolean argument: true/false
+    String lane_splitting_arg = if no_lane_splitting then "true" else "false"
 
     command <<<
         set -euo pipefail
 
-        # Cromwell's working directory — used for all output paths so that
-        # references remain valid after we cd into the run folder.
         WORKDIR="$(pwd)"
 
-        # ── 0. Report available disk space for debugging ─────────────────────
-        echo "[INFO] Disk available before extraction:"
+        # ── 0. Confirm binary ─────────────────────────────────────────────────
+        echo "[INFO] bcl-convert version:"
+        bcl-convert --version
+
+        # ── 1. Disk before extraction ─────────────────────────────────────────
+        echo "[INFO] Disk before extraction:"
         df -h .
 
-        # ── 1. Extract the BCL run archive ──────────────────────────────────
+        # ── 2. Extract BCL run archive ────────────────────────────────────────
         mkdir -p "${WORKDIR}/run_dir"
-        echo "[INFO] Extracting BCL archive: ~{bcl_tar_gz}"
+        echo "[INFO] Extracting: ~{bcl_tar_gz}"
         tar -xzf "~{bcl_tar_gz}" -C "${WORKDIR}/run_dir" --strip-components=1
         echo "[INFO] Disk after extraction:"
         df -h .
 
-        # ── 2. Place the sample sheet inside the run directory ──────────────
-        # bcl_to_fastq searches for SampleSheet.csv in the current working
-        # directory (cwd), not via --runfolder. We therefore cd into run_dir
-        # before invoking the tool so cwd == runfolder.
+        # ── 3. Stage the sample sheet at the run directory root ───────────────
+        # bcl-convert searches --bcl-input-directory for SampleSheet.csv by
+        # default, so placing it there means we don't need --sample-sheet.
+        # We pass --sample-sheet explicitly anyway for clarity.
         cp "~{sample_sheet}" "${WORKDIR}/run_dir/SampleSheet.csv"
 
-        # ── 3. Run bcl_to_fastq from inside the run directory ───────────────
-        echo "[INFO] Starting bcl_to_fastq"
-        cd "${WORKDIR}/run_dir"
-        bcl_to_fastq \
-            --loading        ~{loading_threads} \
-            --demultiplexing ~{demux_threads} \
-            --processing     ~{processing_threads} \
-            --writing        ~{writing_threads} \
-            --barcode-mismatches ~{barcode_mismatches} \
-            ~{rc_flag} \
-            --no-wait
-        cd "${WORKDIR}"
-
-        echo "[INFO] Disk after bcl_to_fastq:"
-        df -h .
-
-        # ── 4. Collect outputs ──────────────────────────────────────────────
-        BASECALLS="${WORKDIR}/run_dir/Data/Intensities/BaseCalls"
-
-        # Move (not copy) FASTQs to avoid doubling disk usage.
-        # bcl_to_fastq names them <sample>_R1.fastq.gz / <sample>_R2.fastq.gz
+        # ── 4. Create output directory ────────────────────────────────────────
         mkdir -p "${WORKDIR}/fastqs_out"
 
-        find "${BASECALLS}" -maxdepth 1 -name "*_R1.fastq.gz" \
-            ! -name "Undetermined*" \
-            -exec mv {} "${WORKDIR}/fastqs_out/" \;
+        # ── 5. Run bcl-convert ────────────────────────────────────────────────
+        echo "[INFO] Starting bcl-convert"
+        bcl-convert \
+            --bcl-input-directory   "${WORKDIR}/run_dir" \
+            --output-directory      "${WORKDIR}/fastqs_out" \
+            --sample-sheet          "${WORKDIR}/run_dir/SampleSheet.csv" \
+            --no-lane-splitting     ~{lane_splitting_arg} \
+            --bcl-only-matched-reads true \
+            --barcode-mismatches    ~{barcode_mismatches} \
+            --force \
+            2>&1 | tee "${WORKDIR}/bcl-convert.log"
 
-        find "${BASECALLS}" -maxdepth 1 -name "*_R2.fastq.gz" \
-            ! -name "Undetermined*" \
-            -exec mv {} "${WORKDIR}/fastqs_out/" \;
-
-        # Move stats and log to the Cromwell working directory.
-        # bcl_to_fastq writes these to cwd (run_dir), which is why we cd'd back.
-        mv "${WORKDIR}/run_dir/demultiplexing_stats.csv" "${WORKDIR}/demultiplexing_stats.csv"
-        mv "${WORKDIR}/run_dir/bcl2fastq.log"            "${WORKDIR}/bcl2fastq.log"
-
-        echo "[INFO] Done. FASTQ files:"
-        ls -lh "${WORKDIR}/fastqs_out/"
-        echo "[INFO] Final disk usage:"
+        echo "[INFO] Disk after bcl-convert:"
         df -h .
+
+        # ── 6. Collect FASTQ outputs ──────────────────────────────────────────
+        # With --no-lane-splitting true:  <Sample_ID>_S#_R[12]_001.fastq.gz
+        # With --no-lane-splitting false: <Sample_ID>_S#_L00#_R[12]_001.fastq.gz
+        # In both cases the glob *_R1_001.fastq.gz / *_R2_001.fastq.gz matches.
+        # FASTQs land directly in fastqs_out/ (no subdirectories unless
+        # --bcl-sampleproject-subdirectories is set, which we do not set here).
+        mkdir -p "${WORKDIR}/out_r1" "${WORKDIR}/out_r2"
+
+        find "${WORKDIR}/fastqs_out" -maxdepth 1 \
+            -name "*_R1_001.fastq.gz" ! -name "Undetermined*" \
+            -exec mv {} "${WORKDIR}/out_r1/" \;
+
+        find "${WORKDIR}/fastqs_out" -maxdepth 1 \
+            -name "*_R2_001.fastq.gz" ! -name "Undetermined*" \
+            -exec mv {} "${WORKDIR}/out_r2/" \;
+
+        # ── 7. Archive the Reports directory ──────────────────────────────────
+        # bcl-convert writes Reports/ inside --output-directory
+        tar -czf "${WORKDIR}/reports.tar.gz" \
+            -C "${WORKDIR}/fastqs_out" Reports/
+
+        echo "[INFO] Done."
+        echo "[INFO] R1 files:"; ls -lh "${WORKDIR}/out_r1/"
+        echo "[INFO] R2 files:"; ls -lh "${WORKDIR}/out_r2/"
+        echo "[INFO] Final disk:"; df -h .
     >>>
 
     output {
-        Array[File] fastq_r1      = glob("fastqs_out/*_R1.fastq.gz")
-        Array[File] fastq_r2      = glob("fastqs_out/*_R2.fastq.gz")
-        File        demux_stats   = "demultiplexing_stats.csv"
-        File        bcl2fastq_log = "bcl2fastq.log"
+        Array[File] fastq_r1        = glob("out_r1/*_R1_001.fastq.gz")
+        Array[File] fastq_r2        = glob("out_r2/*_R2_001.fastq.gz")
+        File        reports_tar_gz  = "reports.tar.gz"
+        File        bcl_convert_log = "bcl-convert.log"
     }
 
     runtime {
-        docker:      "quay.io/biocontainers/bcl2fastq-nextseq:1.3.0--pyh5e36f6f_0"
+        docker:      "idolawoye/bcl-convert:4.4.6"
         memory:      "~{memory_gb} GiB"
         disks:       "local-disk ~{disk_gb} SSD"
-        cpu:         processing_threads
+        cpu:         8
         preemptible: preemptible
         maxRetries:  1
     }
