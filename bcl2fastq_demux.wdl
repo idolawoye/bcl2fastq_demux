@@ -198,9 +198,20 @@ task BclConvert {
             -exec mv {} "${WORKDIR}/out_r2/" \;
 
         # ── 7. Archive the Reports directory ──────────────────────────────────
-        # bcl-convert writes Reports/ inside --output-directory
-        tar -czf "${WORKDIR}/reports.tar.gz" \
-            -C "${WORKDIR}/fastqs_out" Reports/
+        # bcl-convert is documented to write Reports/ inside --output-directory,
+        # but some builds write it to cwd instead. Locate it defensively.
+        echo "[INFO] Locating Reports/ directory:"
+        REPORTS_DIR=$(find "${WORKDIR}" -maxdepth 3 -type d -name "Reports" | head -1)
+
+        if [ -z "${REPORTS_DIR}" ]; then
+            echo "[ERROR] Could not find Reports/ directory anywhere under ${WORKDIR}"
+            echo "[INFO] Full directory tree after bcl-convert:"
+            find "${WORKDIR}" -maxdepth 4 ! -name "*.fastq.gz" ! -name "*.bcl*" | sort
+            exit 1
+        fi
+
+        echo "[INFO] Found Reports/ at: ${REPORTS_DIR}"
+        tar -czf "${WORKDIR}/reports.tar.gz" -C "$(dirname "${REPORTS_DIR}")" Reports/
 
         echo "[INFO] Done."
         echo "[INFO] R1 files:"; ls -lh "${WORKDIR}/out_r1/"
