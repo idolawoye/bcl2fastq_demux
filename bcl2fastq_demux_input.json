@@ -4,7 +4,7 @@
   "bcl2fastq_demux.no_lane_splitting": true,
   "bcl2fastq_demux.barcode_mismatches": 1,
   "bcl2fastq_demux.processing_threads": 8,
-  "bcl2fastq_demux.memory_gb": 16,
+  "bcl2fastq_demux.memory_gb": 32,
   "bcl2fastq_demux.disk_multiplier": 15,
   "bcl2fastq_demux.disk_overhead_gb": 50,
   "bcl2fastq_demux.preemptible": 1
