@@ -29,7 +29,6 @@ version 1.0
 ##   bcl_tar_gz         : tar.gz of the Illumina run directory
 ##   sample_sheet       : Illumina SampleSheet.csv (v1 or v2 format)
 ##   no_lane_splitting  : merge all lanes into one FASTQ per sample [default true]
-##   barcode_mismatches : allowed mismatches per index [default 1]
 ##   memory_gb          : RAM in GiB [default 16]
 ##   disk_multiplier    : multiplier on compressed input size [default 15]
 ##   disk_overhead_gb   : flat GiB overhead [default 50]
@@ -39,7 +38,6 @@ version 1.0
 ## -------
 ##   fastq_r1          : Array of R1 FASTQ files (one per sample)
 ##   fastq_r2          : Array of R2 FASTQ files (one per sample)
-##   reports_tar_gz    : Reports directory archived as tar.gz
 ##   bcl_convert_log   : bcl-convert stdout+stderr log
 
 workflow bcl2fastq_demux {
@@ -63,10 +61,6 @@ workflow bcl2fastq_demux {
             description: "Merge all lanes into a single FASTQ per sample. When true, output filenames omit the L00N lane component.",
             default: true
         }
-        barcode_mismatches: {
-            description: "Allowed mismatches per index barcode. BCL Convert default is 1.",
-            default: 1
-        }
         memory_gb: {
             description: "RAM to allocate in GiB.",
             default: 16
@@ -89,7 +83,6 @@ workflow bcl2fastq_demux {
         File    bcl_tar_gz
         File    sample_sheet
         Boolean no_lane_splitting  = true
-        Int     barcode_mismatches = 1
         Int     memory_gb          = 16
         Int     disk_multiplier    = 15
         Int     disk_overhead_gb   = 50
@@ -104,7 +97,6 @@ workflow bcl2fastq_demux {
             bcl_tar_gz         = bcl_tar_gz,
             sample_sheet       = sample_sheet,
             no_lane_splitting  = no_lane_splitting,
-            barcode_mismatches = barcode_mismatches,
             memory_gb          = memory_gb,
             disk_gb            = disk_gb,
             preemptible        = preemptible
@@ -113,7 +105,6 @@ workflow bcl2fastq_demux {
     output {
         Array[File] fastq_r1        = BclConvert.fastq_r1
         Array[File] fastq_r2        = BclConvert.fastq_r2
-        File        reports_tar_gz  = BclConvert.reports_tar_gz
         File        bcl_convert_log = BclConvert.bcl_convert_log
     }
 }
@@ -128,7 +119,6 @@ task BclConvert {
         File    bcl_tar_gz
         File    sample_sheet
         Boolean no_lane_splitting
-        Int     barcode_mismatches
         Int     memory_gb
         Int     disk_gb
         Int     preemptible
@@ -174,7 +164,6 @@ task BclConvert {
             --sample-sheet          "${WORKDIR}/run_dir/SampleSheet.csv" \
             --no-lane-splitting     ~{lane_splitting_arg} \
             --bcl-only-matched-reads true \
-            --barcode-mismatches    ~{barcode_mismatches} \
             --force \
             2>&1 | tee "${WORKDIR}/bcl-convert.log"
 
@@ -185,8 +174,7 @@ task BclConvert {
         # With --no-lane-splitting true:  <Sample_ID>_S#_R[12]_001.fastq.gz
         # With --no-lane-splitting false: <Sample_ID>_S#_L00#_R[12]_001.fastq.gz
         # In both cases the glob *_R1_001.fastq.gz / *_R2_001.fastq.gz matches.
-        # FASTQs land directly in fastqs_out/ (no subdirectories unless
-        # --bcl-sampleproject-subdirectories is set, which we do not set here).
+        # FASTQs land directly in fastqs_out/
         mkdir -p "${WORKDIR}/out_r1" "${WORKDIR}/out_r2"
 
         find "${WORKDIR}/fastqs_out" -maxdepth 1 \
@@ -197,32 +185,11 @@ task BclConvert {
             -name "*_R2_001.fastq.gz" ! -name "Undetermined*" \
             -exec mv {} "${WORKDIR}/out_r2/" \;
 
-        # ── 7. Archive the Reports directory ──────────────────────────────────
-        # bcl-convert is documented to write Reports/ inside --output-directory,
-        # but some builds write it to cwd instead. Locate it defensively.
-        echo "[INFO] Locating Reports/ directory:"
-        REPORTS_DIR=$(find "${WORKDIR}" -maxdepth 3 -type d -name "Reports" | head -1)
-
-        if [ -z "${REPORTS_DIR}" ]; then
-            echo "[ERROR] Could not find Reports/ directory anywhere under ${WORKDIR}"
-            echo "[INFO] Full directory tree after bcl-convert:"
-            find "${WORKDIR}" -maxdepth 4 ! -name "*.fastq.gz" ! -name "*.bcl*" | sort
-            exit 1
-        fi
-
-        echo "[INFO] Found Reports/ at: ${REPORTS_DIR}"
-        tar -czf "${WORKDIR}/reports.tar.gz" -C "$(dirname "${REPORTS_DIR}")" Reports/
-
-        echo "[INFO] Done."
-        echo "[INFO] R1 files:"; ls -lh "${WORKDIR}/out_r1/"
-        echo "[INFO] R2 files:"; ls -lh "${WORKDIR}/out_r2/"
-        echo "[INFO] Final disk:"; df -h .
     >>>
 
     output {
         Array[File] fastq_r1        = glob("out_r1/*_R1_001.fastq.gz")
         Array[File] fastq_r2        = glob("out_r2/*_R2_001.fastq.gz")
-        File        reports_tar_gz  = "reports.tar.gz"
         File        bcl_convert_log = "bcl-convert.log"
     }
 
