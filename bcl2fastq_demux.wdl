@@ -216,7 +216,7 @@ task BclConvert {
     }
 
     runtime {
-        docker:      "idolawoye/bcl-convert:4.4.6"
+        docker:      "idolawoye/bcl-convert:4.4.6.2"
         memory:      "~{memory_gb} GiB"
         disks:       "local-disk ~{disk_gb} SSD"
         cpu:         8
