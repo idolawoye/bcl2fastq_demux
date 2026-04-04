@@ -11,4 +11,3 @@
   "bcl2fastq_demux.disk_overhead_gb": 50,
   "bcl2fastq_demux.preemptible": 1
 } "bcl2fastq_demux.preemptible": 1
-}
