@@ -37,6 +37,7 @@ version 1.0
 ##
 ## Outputs
 ## -------
+##   sample_ids      : Array[String] — sample IDs parsed from FASTQ filenames
 ##   fastq_r1        : Array of R1 FASTQ files (one per sample)
 ##   fastq_r2        : Array of R2 FASTQ files (one per sample)
 ##   bcl_convert_log : bcl-convert stdout+stderr log
@@ -103,12 +104,22 @@ workflow bcl2fastq_demux {
             preemptible       = preemptible
     }
 
+    call ParseSampleIds {
+        input:
+            fastq_r1        = BclConvert.fastq_r1,
+            fastq_r2        = BclConvert.fastq_r2,
+            preemptible     = preemptible
+    }
+
     output {
-        Array[File] fastq_r1        = BclConvert.fastq_r1
-        Array[File] fastq_r2        = BclConvert.fastq_r2
+        Array[String] sample_ids    = ParseSampleIds.sample_ids
+        Array[File] fastq_r1        = ParseSampleIds.fastq_r1_sorted
+        Array[File] fastq_r2        = ParseSampleIds.fastq_r2_sorted
         File        bcl_convert_log = BclConvert.bcl_convert_log
     }
 }
+
+#  ── Task 1: BCL conversion ────────────────────────────────────────────────────
 
 task BclConvert {
 
@@ -225,6 +236,107 @@ task BclConvert {
         memory:      "~{memory_gb} GiB"
         disks:       "local-disk ~{disk_gb} SSD"
         cpu:         8
+        preemptible: preemptible
+        maxRetries:  2
+    }
+}
+
+# ── Task 2: Parse sample IDs from FASTQ filenames ────────────────────────────
+#
+# bcl-convert names FASTQs as:
+#   <Sample_ID>_S<N>_R[12]_001.fastq.gz          (no-lane-splitting)
+#   <Sample_ID>_S<N>_L00<N>_R[12]_001.fastq.gz   (per-lane)
+#
+# This task:
+#   1. Sorts R1 and R2 arrays by filename so they are guaranteed index-matched.
+#   2. Extracts the Sample_ID prefix (everything before _S<digits>_).
+#   3. Writes the three parallel arrays as output files that WDL reads back.
+#
+# Uses python:3.11-slim — tiny image, no bcl-convert needed.
+
+task ParseSampleIds {
+
+    meta {
+        description: "Parses sample IDs from FASTQ filenames and emits index-matched sample_ids, fastq_r1, fastq_r2 arrays for Terra data table import."
+    }
+
+    input {
+        Array[File] fastq_r1
+        Array[File] fastq_r2
+        Int         preemptible
+    }
+
+    command <<<
+        set -euo pipefail
+
+        python3 - << 'PYEOF'
+import os
+import re
+
+# WDL write_json() writes the array to a temp file; read it back as lines.
+# In WDL 1.0 command blocks, ~{sep="\n" fastq_r1} interpolates the array
+# as a newline-separated string — use that directly instead of JSON.
+r1_sorted = sorted(
+    [p.strip() for p in """~{sep="\n" fastq_r1}""".splitlines() if p.strip()],
+    key=os.path.basename
+)
+r2_sorted = sorted(
+    [p.strip() for p in """~{sep="\n" fastq_r2}""".splitlines() if p.strip()],
+    key=os.path.basename
+)
+
+if len(r1_sorted) != len(r2_sorted):
+    raise ValueError(
+        f"R1 count ({len(r1_sorted)}) != R2 count ({len(r2_sorted)}). "
+        "Arrays cannot be index-matched."
+    )
+
+def extract_sample_id(path):
+    name = os.path.basename(path)
+    m = re.match(r'^(.+?)_S\d+_', name)
+    if not m:
+        raise ValueError(f"Cannot parse sample ID from filename: {name}")
+    return m.group(1)
+
+sample_ids = [extract_sample_id(p) for p in r1_sorted]
+r2_ids     = [extract_sample_id(p) for p in r2_sorted]
+
+mismatches = [
+    (i, sample_ids[i], r2_ids[i])
+    for i in range(len(sample_ids))
+    if sample_ids[i] != r2_ids[i]
+]
+if mismatches:
+    raise ValueError(f"R1/R2 sample ID mismatches: {mismatches}")
+
+with open("sample_ids.txt", "w") as fh:
+    fh.write("\n".join(sample_ids) + "\n")
+
+with open("r1_sorted.txt", "w") as fh:
+    fh.write("\n".join(r1_sorted) + "\n")
+
+with open("r2_sorted.txt", "w") as fh:
+    fh.write("\n".join(r2_sorted) + "\n")
+
+print(f"[INFO] Parsed {len(sample_ids)} samples.")
+for sid, r1, r2 in zip(sample_ids, r1_sorted, r2_sorted):
+    print(f"  {sid}")
+    print(f"    R1: {os.path.basename(r1)}")
+    print(f"    R2: {os.path.basename(r2)}")
+PYEOF
+    >>>
+
+    output {
+        Array[String] sample_ids     = read_lines("sample_ids.txt")
+        Array[File]   fastq_r1_sorted = read_lines("r1_sorted.txt")
+        Array[File]   fastq_r2_sorted = read_lines("r2_sorted.txt")
+    }
+
+    runtime {
+        docker:      "python:3.11-slim"
+        memory:      "2 GiB"
+        disks:       "local-disk 10 HDD"
+        cpu:         1
         preemptible: preemptible
         maxRetries:  1
     }
