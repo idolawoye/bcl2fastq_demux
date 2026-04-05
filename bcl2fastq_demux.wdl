@@ -7,8 +7,14 @@ version 1.0
 ## Illumina BCL Convert v4.4.6.
 ##
 ## Binary: bcl-convert (NOT bcl2fastq — this is the newer Illumina tool)
-##
 ## Docker image: idolawoye/bcl-convert:4.4.6.2 (Docker Hub, public)
+##
+## Output structure
+## ----------------
+## The workflow emits three parallel arrays (sample_ids, fastq_r1, fastq_r2)
+## that are index-matched — element [i] of each array belongs to the same
+## sample. Terra can load these directly into a per-sample data table using
+## the "Import from workflow outputs" feature, giving one row per sample.
 ##
 ## Sample sheet format
 ## --------------------
@@ -19,27 +25,31 @@ version 1.0
 ##
 ## Disk sizing strategy
 ## --------------------
-## BCL archives expand ~5-10x when extracted; FASTQ output adds ~2-3x more.
+## Disk budget must cover three things simultaneously:
+## 1. The compressed tar.gz itself (localized by Cromwell before the script runs)
+## 2. The extracted BCL directory (~5-10x compressed size)
+## 3. The FASTQ output (~2-3x compressed size)
 ## Disk is sized dynamically as:
 ##   ceil(size(bcl_tar_gz, "GiB")) * disk_multiplier + disk_overhead_gb
-## Defaults: multiplier=15, overhead=50 GiB.
+## Defaults: multiplier=20, overhead=100 GiB.
+## Raise disk_multiplier if localization itself fails with "No space left on device".
+##   A good formula: set disk_multiplier = ceil(total_needed_GiB / compressed_GiB)
 ##
 ## Inputs
 ## ------
 ##   bcl_tar_gz        : tar.gz of the Illumina run directory
 ##   sample_sheet      : Illumina SampleSheet.csv (v1 or v2 format)
 ##   no_lane_splitting : merge all lanes into one FASTQ per sample [default true]
-##   memory_gb         : RAM in GiB — must exceed bcl-convert minimum of 2 GiB
-##                       free after OS overhead; 32 GiB recommended [default 32]
-##   disk_multiplier   : multiplier on compressed input size [default 15]
-##   disk_overhead_gb  : flat GiB overhead [default 50]
+##   memory_gb         : RAM in GiB; 32 GiB recommended for large runs [default 32]
+##   disk_multiplier   : multiplier on compressed input size [default 20]
+##   disk_overhead_gb  : flat GiB overhead [default 100]
 ##   preemptible       : preemptible VM retries [default 1]
 ##
 ## Outputs
 ## -------
 ##   sample_ids      : Array[String] — sample IDs parsed from FASTQ filenames
-##   fastq_r1        : Array of R1 FASTQ files (one per sample)
-##   fastq_r2        : Array of R2 FASTQ files (one per sample)
+##   fastq_r1        : Array[File]   — R1 FASTQ per sample (index-matched to sample_ids)
+##   fastq_r2        : Array[File]   — R2 FASTQ per sample (index-matched to sample_ids)
 ##   bcl_convert_log : bcl-convert stdout+stderr log
 
 workflow bcl2fastq_demux {
@@ -47,7 +57,7 @@ workflow bcl2fastq_demux {
     meta {
         author: "Idowu Olawoye"
         email: "idowuolawoye@gmail.com"
-        description: "Demultiplex an Illumina BCL run (tar.gz) and SampleSheet.csv into paired-end gzipped FASTQ files using BCL Convert v4.4.6."
+        description: "Demultiplex an Illumina BCL run (tar.gz) and SampleSheet.csv into paired-end gzipped FASTQ files using BCL Convert v4.4.6. Outputs parallel sample_ids/fastq_r1/fastq_r2 arrays for direct Terra data table import."
     }
 
     parameter_meta {
@@ -68,12 +78,12 @@ workflow bcl2fastq_demux {
             default: 32
         }
         disk_multiplier: {
-            description: "Multiplier on compressed BCL input size for disk estimate.",
-            default: 15
+            description: "Multiplier on compressed BCL input size for disk estimate. Must cover: the tar.gz itself (1x, localized before script runs) + BCL extraction (~5-10x) + FASTQ output (~2-3x). Default 20 is conservative; raise further if localization fails with No space left on device.",
+            default: 20
         }
         disk_overhead_gb: {
-            description: "Flat GiB added on top of the scaled disk estimate.",
-            default: 50
+            description: "Flat GiB added on top of the scaled disk estimate for OS, container layers, and tmp files.",
+            default: 100
         }
         preemptible: {
             description: "Number of preemptible VM retries (Google Cloud).",
@@ -86,8 +96,8 @@ workflow bcl2fastq_demux {
         File    sample_sheet
         Boolean no_lane_splitting = true
         Int     memory_gb         = 32
-        Int     disk_multiplier   = 15
-        Int     disk_overhead_gb  = 50
+        Int     disk_multiplier   = 20
+        Int     disk_overhead_gb  = 100
         Int     preemptible       = 1
     }
 
@@ -104,22 +114,26 @@ workflow bcl2fastq_demux {
             preemptible       = preemptible
     }
 
+    # Parse sample IDs from FASTQ filenames for Terra data table import.
+    # Inputs are typed Array[String] — Cromwell does NOT localize (download)
+    # String inputs, so the 378 FASTQ files are never re-downloaded here.
+    # Only the GCS path strings are passed; the Python script works on basenames.
     call ParseSampleIds {
         input:
-            fastq_r1_paths        = BclConvert.fastq_r1,
-            fastq_r2_paths        = BclConvert.fastq_r2,
-            preemptible     = preemptible
+            fastq_r1_paths = BclConvert.fastq_r1,
+            fastq_r2_paths = BclConvert.fastq_r2,
+            preemptible    = preemptible
     }
 
     output {
-        Array[String] sample_ids    = ParseSampleIds.sample_ids
+        Array[String] sample_ids      = ParseSampleIds.sample_ids
         Array[String] fastq_r1        = ParseSampleIds.fastq_r1_sorted
         Array[String] fastq_r2        = ParseSampleIds.fastq_r2_sorted
-        File        bcl_convert_log = BclConvert.bcl_convert_log
+        File          bcl_convert_log = BclConvert.bcl_convert_log
     }
 }
 
-#  ── Task 1: BCL conversion ────────────────────────────────────────────────────
+# ── Task 1: BCL conversion ────────────────────────────────────────────────────
 
 task BclConvert {
 
@@ -136,7 +150,6 @@ task BclConvert {
         Int     preemptible
     }
 
-    # bcl-convert --no-lane-splitting takes an explicit boolean argument: true/false
     String lane_splitting_arg = if no_lane_splitting then "true" else "false"
 
     command <<<
@@ -144,32 +157,25 @@ task BclConvert {
 
         WORKDIR="$(pwd)"
 
-        # ── 0. Confirm binary ─────────────────────────────────────────────────
         echo "[INFO] bcl-convert version:"
         bcl-convert --version
 
-        # ── 1. Disk before extraction ─────────────────────────────────────────
-        echo "[INFO] Disk before extraction:"
+        # Report provisioned disk size so future failures are easier to diagnose
+        echo "[INFO] Provisioned disk (~{disk_gb} GiB requested):"
         df -h .
 
-        # ── 2. Extract BCL run archive ────────────────────────────────────────
         mkdir -p "${WORKDIR}/run_dir"
         echo "[INFO] Extracting: ~{bcl_tar_gz}"
         tar -xzf "~{bcl_tar_gz}" -C "${WORKDIR}/run_dir" --strip-components=1
         echo "[INFO] Disk after extraction:"
         df -h .
 
-        # ── 3. Stage the sample sheet at the run directory root ───────────────
         cp "~{sample_sheet}" "${WORKDIR}/run_dir/SampleSheet.csv"
 
-        # ── 4. Create output directories ──────────────────────────────────────
         mkdir -p "${WORKDIR}/fastqs_out"
         mkdir -p "${WORKDIR}/out_r1"
         mkdir -p "${WORKDIR}/out_r2"
 
-        # ── 5. Run bcl-convert ────────────────────────────────────────────────
-        # Capture the exit code explicitly so that piping into tee does not
-        # mask a kill signal (tee itself exits 0 even if bcl-convert is killed).
         echo "[INFO] Starting bcl-convert"
         BCL_EXIT=0
         bcl-convert \
@@ -182,18 +188,14 @@ task BclConvert {
             2>&1 | tee "${WORKDIR}/bcl-convert.log" || BCL_EXIT=${PIPESTATUS[0]}
 
         if [ "${BCL_EXIT}" -ne 0 ]; then
-            echo "[ERROR] bcl-convert exited with code ${BCL_EXIT}. Check bcl-convert.log above."
+            echo "[ERROR] bcl-convert exited with code ${BCL_EXIT}."
             exit "${BCL_EXIT}"
         fi
 
         echo "[INFO] Disk after bcl-convert:"
         df -h .
 
-        # ── 6. Collect FASTQ outputs ──────────────────────────────────────────
-        # The container image is minimal (no findutils). Use bash glob + mv.
-        # With --no-lane-splitting true:  <Sample_ID>_S#_R[12]_001.fastq.gz
-        # With --no-lane-splitting false: <Sample_ID>_S#_L00#_R[12]_001.fastq.gz
-        # Undetermined files are excluded by the name pattern check.
+        # Move FASTQs — no findutils in this container, use bash globbing
         echo "[INFO] Moving R1 FASTQs"
         for f in "${WORKDIR}"/fastqs_out/*_R1_001.fastq.gz; do
             case "${f##*/}" in Undetermined*) continue ;; esac
@@ -206,16 +208,12 @@ task BclConvert {
             mv "${f}" "${WORKDIR}/out_r2/"
         done
 
-        # ── 7. Verify outputs were actually produced ──────────────────────────
         R1_COUNT=$(ls "${WORKDIR}/out_r1/"*_R1_001.fastq.gz 2>/dev/null | wc -l)
         R2_COUNT=$(ls "${WORKDIR}/out_r2/"*_R2_001.fastq.gz 2>/dev/null | wc -l)
-
-        echo "[INFO] R1 files produced: ${R1_COUNT}"
-        echo "[INFO] R2 files produced: ${R2_COUNT}"
+        echo "[INFO] R1 files: ${R1_COUNT}  R2 files: ${R2_COUNT}"
 
         if [ "${R1_COUNT}" -eq 0 ] || [ "${R2_COUNT}" -eq 0 ]; then
-            echo "[ERROR] No FASTQ files found. bcl-convert may have been killed (OOM) or failed silently."
-            echo "[INFO] Contents of fastqs_out/:"
+            echo "[ERROR] No FASTQ files found — bcl-convert may have been killed (OOM)."
             ls -lh "${WORKDIR}/fastqs_out/" || true
             exit 1
         fi
@@ -237,7 +235,7 @@ task BclConvert {
         disks:       "local-disk ~{disk_gb} SSD"
         cpu:         8
         preemptible: preemptible
-        maxRetries:  2
+        maxRetries:  1
     }
 }
 
@@ -247,12 +245,19 @@ task BclConvert {
 #   <Sample_ID>_S<N>_R[12]_001.fastq.gz          (no-lane-splitting)
 #   <Sample_ID>_S<N>_L00<N>_R[12]_001.fastq.gz   (per-lane)
 #
+# IMPORTANT: inputs are Array[String], NOT Array[File].
+# Cromwell localizes (re-downloads) File inputs onto the task VM.
+# With 189 samples that means downloading ~378 large FASTQ files onto a
+# small disk just to read their filenames — which caused the disk-full error.
+# Passing paths as String prevents any localization. The Python script only
+# needs os.path.basename() on the path string; the files stay in GCS.
+#
 # This task:
-#   1. Sorts R1 and R2 arrays by filename so they are guaranteed index-matched.
+#   1. Sorts R1 and R2 path arrays by filename so they are index-matched.
 #   2. Extracts the Sample_ID prefix (everything before _S<digits>_).
 #   3. Writes the three parallel arrays as output files that WDL reads back.
 #
-# Uses python:3.11-slim — tiny image, no bcl-convert needed.
+# Uses python:3.11-slim — tiny image, no downloads needed.
 
 task ParseSampleIds {
 
@@ -263,7 +268,7 @@ task ParseSampleIds {
     input {
         Array[String] fastq_r1_paths
         Array[String] fastq_r2_paths
-        Int         preemptible
+        Int           preemptible
     }
 
     command <<<
