@@ -282,14 +282,12 @@ task ParseSampleIds {
 import os
 import re
 
-# Read the path files
-with open("r1_paths.txt", "r") as f:
-    r1_paths = [line.strip() for line in f if line.strip()]
+with open("r1_paths.txt") as f:
+    r1_paths = [l.strip() for l in f if l.strip()]
 
-with open("r2_paths.txt", "r") as f:
-    r2_paths = [line.strip() for line in f if line.strip()]
+with open("r2_paths.txt") as f:
+    r2_paths = [l.strip() for l in f if l.strip()]
 
-# Sort by basename
 r1_sorted = sorted(r1_paths, key=os.path.basename)
 r2_sorted = sorted(r2_paths, key=os.path.basename)
 
@@ -301,7 +299,7 @@ if len(r1_sorted) != len(r2_sorted):
 
 def extract_sample_id(path):
     name = os.path.basename(path)
-    m = re.match(r'^(.+?)_S\d+_', name)
+    m = re.match(r"^(.+?)_S\d+_", name)
     if not m:
         raise ValueError(f"Cannot parse sample ID from filename: {name}")
     return m.group(1)
@@ -327,7 +325,7 @@ with open("r2_sorted.txt", "w") as fh:
     fh.write("\n".join(r2_sorted) + "\n")
 
 print(f"[INFO] Parsed {len(sample_ids)} samples.")
-for sid, r1, r2 in zip(sample_ids[:5], r1_sorted[:5], r2_sorted[:5]):  # Show first 5 only
+for sid, r1, r2 in zip(sample_ids[:5], r1_sorted[:5], r2_sorted[:5]):
     print(f"  {sid}")
     print(f"    R1: {os.path.basename(r1)}")
     print(f"    R2: {os.path.basename(r2)}")
