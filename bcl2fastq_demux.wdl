@@ -275,8 +275,8 @@ task ParseSampleIds {
         set -euo pipefail
 
         # Write the arrays to temporary files for Python to read
-        printf '%s\n' ~{sep="\n" fastq_r1_paths} > r1_paths.txt
-        printf '%s\n' ~{sep="\n" fastq_r2_paths} > r2_paths.txt
+        cp ~{write_lines(fastq_r1_paths)} r1_paths.txt
+        cp ~{write_lines(fastq_r2_paths)} r2_paths.txt
 
         python3 - << 'PYEOF'
 import os
