@@ -274,21 +274,24 @@ task ParseSampleIds {
     command <<<
         set -euo pipefail
 
+        # Write the arrays to temporary files for Python to read
+        printf '%s\n' ~{sep="\n" fastq_r1_paths} > r1_paths.txt
+        printf '%s\n' ~{sep="\n" fastq_r2_paths} > r2_paths.txt
+
         python3 - << 'PYEOF'
 import os
 import re
 
-# WDL write_json() writes the array to a temp file; read it back as lines.
-# In WDL 1.0 command blocks, ~{sep="\n" fastq_r1} interpolates the array
-# as a newline-separated string — use that directly instead of JSON.
-r1_sorted = sorted(
-    [p.strip() for p in """~{sep="\n" fastq_r1_paths}""".splitlines() if p.strip()],
-    key=os.path.basename
-)
-r2_sorted = sorted(
-    [p.strip() for p in """~{sep="\n" fastq_r2_paths}""".splitlines() if p.strip()],
-    key=os.path.basename
-)
+# Read the path files
+with open("r1_paths.txt", "r") as f:
+    r1_paths = [line.strip() for line in f if line.strip()]
+
+with open("r2_paths.txt", "r") as f:
+    r2_paths = [line.strip() for line in f if line.strip()]
+
+# Sort by basename
+r1_sorted = sorted(r1_paths, key=os.path.basename)
+r2_sorted = sorted(r2_paths, key=os.path.basename)
 
 if len(r1_sorted) != len(r2_sorted):
     raise ValueError(
@@ -324,7 +327,7 @@ with open("r2_sorted.txt", "w") as fh:
     fh.write("\n".join(r2_sorted) + "\n")
 
 print(f"[INFO] Parsed {len(sample_ids)} samples.")
-for sid, r1, r2 in zip(sample_ids, r1_sorted, r2_sorted):
+for sid, r1, r2 in zip(sample_ids[:5], r1_sorted[:5], r2_sorted[:5]):  # Show first 5 only
     print(f"  {sid}")
     print(f"    R1: {os.path.basename(r1)}")
     print(f"    R2: {os.path.basename(r2)}")
