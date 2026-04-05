@@ -106,15 +106,15 @@ workflow bcl2fastq_demux {
 
     call ParseSampleIds {
         input:
-            fastq_r1        = BclConvert.fastq_r1,
-            fastq_r2        = BclConvert.fastq_r2,
+            fastq_r1_paths        = BclConvert.fastq_r1,
+            fastq_r2_paths        = BclConvert.fastq_r2,
             preemptible     = preemptible
     }
 
     output {
         Array[String] sample_ids    = ParseSampleIds.sample_ids
-        Array[File] fastq_r1        = ParseSampleIds.fastq_r1_sorted
-        Array[File] fastq_r2        = ParseSampleIds.fastq_r2_sorted
+        Array[String] fastq_r1        = ParseSampleIds.fastq_r1_sorted
+        Array[String] fastq_r2        = ParseSampleIds.fastq_r2_sorted
         File        bcl_convert_log = BclConvert.bcl_convert_log
     }
 }
