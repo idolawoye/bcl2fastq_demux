@@ -261,8 +261,8 @@ task ParseSampleIds {
     }
 
     input {
-        Array[File] fastq_r1
-        Array[File] fastq_r2
+        Array[String] fastq_r1_paths
+        Array[String] fastq_r2_paths
         Int         preemptible
     }
 
@@ -277,11 +277,11 @@ import re
 # In WDL 1.0 command blocks, ~{sep="\n" fastq_r1} interpolates the array
 # as a newline-separated string — use that directly instead of JSON.
 r1_sorted = sorted(
-    [p.strip() for p in """~{sep="\n" fastq_r1}""".splitlines() if p.strip()],
+    [p.strip() for p in """~{sep="\n" fastq_r1_paths}""".splitlines() if p.strip()],
     key=os.path.basename
 )
 r2_sorted = sorted(
-    [p.strip() for p in """~{sep="\n" fastq_r2}""".splitlines() if p.strip()],
+    [p.strip() for p in """~{sep="\n" fastq_r2_paths}""".splitlines() if p.strip()],
     key=os.path.basename
 )
 
@@ -327,9 +327,9 @@ PYEOF
     >>>
 
     output {
-        Array[String] sample_ids     = read_lines("sample_ids.txt")
-        Array[File]   fastq_r1_sorted = read_lines("r1_sorted.txt")
-        Array[File]   fastq_r2_sorted = read_lines("r2_sorted.txt")
+        Array[String] sample_ids      = read_lines("sample_ids.txt")
+        Array[String] fastq_r1_sorted = read_lines("r1_sorted.txt")
+        Array[String] fastq_r2_sorted = read_lines("r2_sorted.txt")
     }
 
     runtime {
