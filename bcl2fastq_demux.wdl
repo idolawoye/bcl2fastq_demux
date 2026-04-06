@@ -47,9 +47,9 @@ version 1.0
 ##
 ## Outputs
 ## -------
-##   sample_ids      : Array[String] — sample IDs parsed from FASTQ filenames
-##   fastq_r1        : Array[File]   — R1 FASTQ per sample (index-matched to sample_ids)
-##   fastq_r2        : Array[File]   — R2 FASTQ per sample (index-matched to sample_ids)
+##   sample_table    : Terra TSV — load via Import Data > Upload TSV to create
+##                     a new "sample" entity table with one row per sample and
+##                     columns: entity:sample_id | fastq_r1 | fastq_r2
 ##   bcl_convert_log : bcl-convert stdout+stderr log
 
 workflow bcl2fastq_demux {
@@ -126,9 +126,8 @@ workflow bcl2fastq_demux {
     }
 
     output {
-        Array[String] sample_ids      = ParseSampleIds.sample_ids
-        Array[String] fastq_r1        = ParseSampleIds.fastq_r1_sorted
-        Array[String] fastq_r2        = ParseSampleIds.fastq_r2_sorted
+        # Generates Terra dataframe
+        File          sample_table    = ParseSampleIds.sample_table
         File          bcl_convert_log = BclConvert.bcl_convert_log
     }
 }
