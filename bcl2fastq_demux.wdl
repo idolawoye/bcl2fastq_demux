@@ -315,27 +315,24 @@ mismatches = [
 if mismatches:
     raise ValueError(f"R1/R2 sample ID mismatches: {mismatches}")
 
-with open("sample_ids.txt", "w") as fh:
-    fh.write("\n".join(sample_ids) + "\n")
+# Write a Terra-format TSV.
+# The first column header MUST be "entity:<table_name>_id" — Terra uses this
+# to name the table ("sample") and set the primary key (sample_id).
+# Subsequent columns become the table's attribute columns.
+with open("sample_table.tsv", "w") as fh:
+    fh.write("entity:sample_id\tfastq_r1\tfastq_r2\n")
+    for sid, r1, r2 in zip(sample_ids, r1_sorted, r2_sorted):
+        fh.write(f"{sid}\t{r1}\t{r2}\n")
 
-with open("r1_sorted.txt", "w") as fh:
-    fh.write("\n".join(r1_sorted) + "\n")
-
-with open("r2_sorted.txt", "w") as fh:
-    fh.write("\n".join(r2_sorted) + "\n")
-
-print(f"[INFO] Parsed {len(sample_ids)} samples.")
+print(f"[INFO] Wrote sample_table.tsv with {len(sample_ids)} rows.")
+print("[INFO] First 5 rows:")
 for sid, r1, r2 in zip(sample_ids[:5], r1_sorted[:5], r2_sorted[:5]):
-    print(f"  {sid}")
-    print(f"    R1: {os.path.basename(r1)}")
-    print(f"    R2: {os.path.basename(r2)}")
+    print(f"  {sid}  {os.path.basename(r1)}  {os.path.basename(r2)}")
 PYEOF
     >>>
 
     output {
-        Array[String] sample_ids      = read_lines("sample_ids.txt")
-        Array[String] fastq_r1_sorted = read_lines("r1_sorted.txt")
-        Array[String] fastq_r2_sorted = read_lines("r2_sorted.txt")
+        File sample_table = "sample_table.tsv"
     }
 
     runtime {
